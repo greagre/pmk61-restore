@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mk-emulator · тесты ядра</title>
+<style>
+  :root {
+    --bg: #eef1f6; --card: #fff; --ink: #16202a; --dim: #66727f;
+    --line: #d9e0e8; --ok: #1f9d55; --bad: #d64545; --bad-bg: #fdeaea; --accent: #2f6feb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 18px 14px 40px; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .lead { color: var(--dim); font-size: 13px; margin: 0 0 16px; }
+  .tally { display: flex; align-items: center; gap: 10px; background: var(--card);
+           border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px;
+           margin-bottom: 14px; box-shadow: 0 2px 10px rgba(20,40,70,.06); }
+  .tally .num { font-size: 26px; font-weight: 700; letter-spacing: -.5px; }
+  .tally .num.ok { color: var(--ok); }
+  .tally .num.bad { color: var(--bad); }
+  .tally .cap { color: var(--dim); font-size: 13px; }
+  .list { display: flex; flex-direction: column; gap: 8px; }
+  .row { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+         padding: 11px 13px; display: grid; grid-template-columns: 18px 1fr; gap: 10px; }
+  .row.good .mark { color: var(--ok); font-weight: 700; }
+  .row.fail .mark { color: var(--bad); font-weight: 700; }
+  .row.fail { border-color: #f0bcbc; background: var(--bad-bg); }
+  .name { font-weight: 600; }
+  .meta { color: var(--dim); font-size: 12.5px; margin-top: 2px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .group { margin: 16px 0 4px; color: var(--dim); font-size: 12px;
+           text-transform: uppercase; letter-spacing: .06em; }
+  .acts { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
+  button, a.btn { appearance: none; border: 1px solid var(--line); background: var(--card);
+    color: var(--ink); border-radius: 11px; padding: 11px 16px; font: inherit;
+    font-weight: 600; text-decoration: none; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .foot { margin-top: 18px; color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Тесты ядра</h1>
+<p class="lead">Каждый кейс прогоняется на чистом ядре без интерфейса — те же числа, что показывает «Проверить» в библиотеке.</p>
+
+<div class="tally">
+  <div class="num" id="tallyNum">—</div>
+  <div class="cap" id="tallyCap">считаю…</div>
+</div>
+
+<div class="list" id="list"></div>
+
+<div class="acts">
+  <button type="button" class="primary" id="rerun">Прогнать заново</button>
+  <a class="btn" href="./index.html">Открыть эмулятор</a>
+</div>
+
+<p class="foot" id="foot"></p>
+
+<script src="core.js"></script>
+<script src="core-fix.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var NOP = 0x54;
+
+  /* prog — коды по адресам (индекс массива = адрес).
+     data — регистры до прогона. x — число в X. angle — положение Р-ГРД-Г.
+     ВАЖНО: core.run() возвращает { result, steps, err, x, overflow } —
+     результат лежит в r.x (строчная), а не в r.X. */
+  var CASES = [
+    { group: 'Программы из библиотеки',
+      name: 'n! — факториал',
+      prog: [0x01, 0x41, 0x61, 0x60, 0x12, 0x41, 0x5D, 0x00, 0x02, 0x61, 0x50],
+      data: { 0: 7 }, expect: 5040 },
+
+    { name: 'Сумма 1…N',
+      prog: [0x60, 0x60, 0x01, 0x10, 0x12, 0x02, 0x13, 0x50],
+      data: { 0: 10 }, expect: 55 },
+
+    { name: 'Длина отрезка',
+      prog: [0x61, 0x62, 0x11, 0x22, 0x63, 0x64, 0x11, 0x22, 0x10, 0x21, 0x50],
+      data: { 1: 8, 2: 1, 3: 4, 4: 2 }, expect: 7.2801099 },
+
+    { name: 'Площадь круга',
+      prog: [0x61, 0x22, 0x20, 0x12, 0x50],
+      data: { 1: 2 }, expect: 12.566371 },
+
+    { name: 'Формула Герона',
+      prog: [0x61, 0x62, 0x10, 0x63, 0x10, 0x02, 0x13, 0x44,
+             0x64, 0x61, 0x11, 0x12, 0x64, 0x62, 0x11, 0x12,
+             0x64, 0x63, 0x11, 0x12, 0x21, 0x50],
+      data: { 1: 3, 2: 4, 3: 5 }, expect: 6 },
+
+    { name: 'НОД четырёх чисел (32, 124, 206, 1086)',
+      prog: [
+        0x53, 0x02, 0x00,
+        0x63, 0x42,
+        0x53, 0x02, 0x00,
+        0x64, 0x42,
+        0x53, 0x02, 0x00,
+        0x61, 0x50,
+        NOP, NOP, NOP, NOP, NOP,
+        0x61, 0x62, 0x11,
+        0x57, 0x04, 0x03,
+        0x59, 0x03, 0x06,
+        0x61, 0x62, 0x11, 0x41,
+        0x51, 0x02, 0x00,
+        0x62, 0x61, 0x11, 0x42,
+        0x51, 0x02, 0x00,
+        0x52
+      ],
+      data: { 1: 32, 2: 124, 3: 206, 4: 1086 }, expect: 2 },
+
+    { group: 'Подпрограммы',
+      name: 'Один вызов: 5 · ПП 06 · С/П · 1 · + · В/О',
+      prog: [0x05, 0x53, 0x00, 0x06, 0x50, NOP, 0x01, 0x10, 0x52],
+      expect: 6 },
+
+    { name: 'Вложенный вызов: два уровня, возврат по стеку',
+      prog: [0x02, 0x53, 0x00, 0x08, 0x50, NOP, NOP, NOP,
+             0x53, 0x01, 0x03, 0x10, 0x52,
+             0x01, 0x52],
+      expect: 3 },
+
+    { group: 'Угловые единицы',
+      name: 'sin 30 в градусах', prog: [0x1C, 0x50], x: 30, angle: 'deg', expect: 0.5 },
+    { name: 'sin 100 в градах', prog: [0x1C, 0x50], x: 100, angle: 'grad', expect: 1 },
+    { name: 'sin π/2 в радианах', prog: [0x1C, 0x50], x: Math.PI / 2, angle: 'rad', expect: 1 },
+    { name: 'arcsin 0.5 в градусах', prog: [0x19, 0x50], x: 0.5, angle: 'deg', expect: 30 },
+    { name: 'arcsin 0.5 в градах', prog: [0x19, 0x50], x: 0.5, angle: 'grad', expect: 100 / 3 },
+
+    { group: 'Отказы и защита',
+      name: 'Код 26 (не существует) — аварийный останов',
+      prog: [0x26, 0x50], expectError: true },
+
+    { name: 'Переход на адрес вне памяти — ошибка, а не тишина',
+      prog: [0x51, 0x09, 0x09, 0x50], expectError: true }
+  ];
+
+  function near(a, b) {
+    if (typeof a !== 'number' || !isFinite(a)) return false;
+    return Math.abs(a - b) <= Math.abs(b) * 1e-6 + 1e-9;
+  }
+
+  function runCase(c) {
+    var core = MKCore.create({});
+    core.setProgram(c.prog);          /* сбрасывает и регистры */
+
+    if (c.data) {
+      Object.keys(c.data).forEach(function (k) {
+        core.setRegister(parseInt(k, 10), c.data[k]);
+      });
+    }
+
+    core.reset(true);                 /* стек в ноль, регистры целы */
+    if (c.angle) core.setAngle(c.angle);
+    if (typeof c.x === 'number') core.setX(c.x);
+
+    var r = core.run(20000);
+
+    if (c.expectError) {
+      return {
+        ok: r.result === 'error',
+        got: r.result === 'error' ? 'ошибка' : 'прошло молча',
+        want: 'ошибка',
+        steps: r.steps
+      };
+    }
+
+    var ok = (r.result === 'stop') && near(r.x, c.expect);
+    return {
+      ok: ok,
+      got: r.result === 'stop' ? MKCore.fmtNum(r.x) : 'нет останова (' + r.result + ')',
+      want: MKCore.fmtNum(c.expect),
+      steps: r.steps
+    };
+  }
+
+  function el(tag, cls, text) {
+    var d = document.createElement(tag);
+    if (cls) d.className = cls;
+    if (text !== undefined) d.textContent = text;
+    return d;
+  }
+
+  function render() {
+    var list = document.getElementById('list');
+    list.innerHTML = '';
+    var total = CASES.length, passed = 0;
+
+    CASES.forEach(function (c) {
+      if (c.group) list.appendChild(el('div', 'group', c.group));
+
+      var res = runCase(c);
+      if (res.ok) passed++;
+
+      var row = el('div', 'row ' + (res.ok ? 'good' : 'fail'));
+      row.appendChild(el('div', 'mark', res.ok ? '✓' : '✗'));
+
+      var body = el('div');
+      body.appendChild(el('div', 'name', c.name));
+      var meta = el('div', 'meta');
+      meta.innerHTML = 'получено <b>' + res.got + '</b>' +
+        ' · ждали <b>' + res.want + '</b>' +
+        ' · шагов <b>' + res.steps + '</b>';
+      body.appendChild(meta);
+
+      row.appendChild(body);
+      list.appendChild(row);
+    });
+
+    var num = document.getElementById('tallyNum');
+    num.textContent = passed + ' / ' + total;
+    num.className = 'num ' + (passed === total ? 'ok' : 'bad');
+
+    document.getElementById('tallyCap').textContent =
+      passed === total
+        ? 'все проверки прошли — ядро считает как ожидалось'
+        : 'есть расхождения: они отмечены красным, разбор — в строке';
+
+    document.getElementById('foot').textContent =
+      'память программ: ' + MKCore.PROG_LEN + ' шагов · регистров: ' + MKCore.REG_COUNT +
+      ' · значащих цифр: ' + MKCore.MAXDIG +
+      ' · надстройка набора числа: ' + (MKCore.__fixTyping ? 'включена' : 'нет');
+  }
+
+  document.getElementById('rerun').addEventListener('click', render);
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', render);
+  } else {
+    render();
+  }
+})();
+</script>
+</body>
+</html>

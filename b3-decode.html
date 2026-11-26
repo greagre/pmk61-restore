@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Декодер Б3-34 → текст</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 14px 40px;
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #f4f5f7; color: #1d2126;
+  }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  .sub { margin: 0 0 16px; color: #5b6570; font-size: 13px; }
+  .card {
+    background: #fff; border: 1px solid #dfe3e8; border-radius: 12px;
+    padding: 14px; margin-bottom: 14px;
+  }
+  textarea {
+    width: 100%; min-height: 92px; resize: vertical;
+    font: 14px/1.5 ui-monospace, "SF Mono", Consolas, monospace;
+    padding: 10px; border: 1px solid #cfd5dc; border-radius: 8px;
+    background: #fbfcfd; color: #1d2126;
+  }
+  textarea::placeholder { color: #98a2ad; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  button {
+    font: inherit; padding: 9px 14px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #cfd5dc; background: #fff; color: #1d2126;
+  }
+  button:hover { background: #f0f3f6; }
+  button.main { background: #2f6fd0; border-color: #2f6fd0; color: #fff; }
+  button.main:hover { background: #2a63ba; }
+  button.on { background: #e7effa; border-color: #2f6fd0; color: #1b4d96; font-weight: 600; }
+  .modes button { min-width: 104px; }
+  .hint { font-size: 12.5px; color: #6b7681; margin-top: 8px; }
+  pre {
+    margin: 0; padding: 14px; border-radius: 10px;
+    background: #fbfcfd; border: 1px solid #dfe3e8;
+    font: 12.5px/1.55 ui-monospace, "SF Mono", Consolas, "Courier New", monospace;
+    white-space: pre-wrap; word-break: break-word;
+    min-height: 120px; color: #1d2126;
+  }
+  pre.mono { white-space: pre; word-break: normal; overflow-x: auto; }
+  pre.tblout { white-space: normal; word-break: normal; overflow-x: auto; padding: 10px; }
+  .label { font-size: 13px; color: #5b6570; margin: 0 0 6px; }
+  label.file {
+    display: inline-block; padding: 9px 14px; border-radius: 8px;
+    border: 1px solid #cfd5dc; background: #fff; cursor: pointer;
+  }
+  label.file input { display: none; }
+  .err { color: #b3261e; font-size: 13px; margin-top: 8px; }
+  a.back { color: #2f6fd0; font-size: 13px; text-decoration: none; }
+
+  /* ---- плашка «откуда пришла программа» ---- */
+  .srcbar {
+    display: none; margin-bottom: 10px; padding: 8px 10px;
+    border-radius: 8px; font-size: 12.5px; line-height: 1.4;
+    background: #eef4fd; border: 1px solid #c3d7f5; color: #1b4d96;
+  }
+  .srcbar.show { display: block; }
+  .srcbar b { font-weight: 700; }
+
+  /* ---- подсветка: работает во всех режимах ---- */
+  .kHead { color: #2f6fd0; font-weight: 700; }
+  .kAddr { color: #8a949e; }
+  .kHex  { color: #2f6fd0; font-weight: 600; }
+  .kCmd  { color: #1d2126; }
+  .kTxt  { color: #1d2126; }
+  .kCmt  { color: #6b7681; }
+  .kExact{ color: #2e7d32; }
+  .kHeur { color: #b26a00; }
+  .kUnk  { color: #b3261e; }
+  .kConf { font-weight: 600; }
+  .kMark { color: #7b3fb3; font-weight: 600; }
+
+  /* ---- легенда ---- */
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 6px 14px;
+    margin-top: 12px; padding-top: 10px; border-top: 1px dashed #e2e6eb;
+    font: 12.5px/1.4 ui-monospace, Consolas, monospace;
+  }
+  .legend .sw { font-weight: 700; }
+
+  /* ---- таблица листинга ---- */
+  .tblcap { font: 12.5px/1.5 ui-monospace, Consolas, monospace; color: #5b6570; margin-bottom: 8px; }
+  table.lst {
+    width: 100%; border-collapse: collapse; display: block; overflow-x: auto;
+    font: 12.5px/1.5 ui-monospace, "SF Mono", Consolas, monospace;
+  }
+  table.lst th, table.lst td {
+    padding: 4px 8px; border-bottom: 1px solid #eceff3;
+    text-align: left; vertical-align: top; white-space: nowrap;
+  }
+  table.lst th { color: #5b6570; font-weight: 600; font-size: 12px; border-bottom: 1px solid #dfe3e8; }
+  table.lst tr.ismark td { background: #f7f3fc; }
+  table.lst td:nth-child(4) { white-space: normal; min-width: 180px; }
+  .tblblock { margin-top: 12px; font-size: 12.5px; line-height: 1.5; }
+  .tblh { font-weight: 700; margin-bottom: 4px; }
+
+  .viewrow { margin-top: 2px; }
+  .viewrow .ttl { font-size: 12.5px; color: #6b7681; align-self: center; margin-right: 4px; }
+</style>
+</head>
+<body>
+
+<h1>Декодер Б3-34 → текст</h1>
+<p class="sub">Вставь hex программы, листинг «адрес ⇥ подпись» или загрузи .json — получишь текст с пояснениями.</p>
+
+<div class="card">
+  <p class="label">Код программы</p>
+  <div class="srcbar" id="srcbar"></div>
+  <textarea id="src" spellcheck="false" placeholder="Поле пустое — программы пока нет.&#10;&#10;Вставь hex-коды: 60 09 12 05 13 03 02 10 41 61 50&#10;или загрузи .json / .txt из корпуса.&#10;Или нажми «Пример» — там перевод °C → °F (11 ячеек)."></textarea>
+  <div class="row">
+    <label class="file">⇧ Загрузить .json / .txt
+      <input type="file" id="file" accept=".json,.txt,application/json,text/plain">
+    </label>
+    <button class="main" id="parse">Разобрать</button>
+    <button id="example">Пример</button>
+    <button id="clear">Очистить</button>
+  </div>
+  <div class="hint">Можно вставлять и подряд без пробелов: <code>6009120513030210416150</code>. Строки вида «07 ⇥ X→П 1» декодер тоже поймёт — возьмёт коды из hex.</div>
+  <div class="err" id="err"></div>
+</div>
+
+<div class="card">
+  <p class="label">Режим вывода</p>
+  <div class="row modes">
+    <button data-mode="brief">Кратко</button>
+    <button data-mode="detailed" class="on">Подробно</button>
+    <button data-mode="listing">Листинг</button>
+  </div>
+  <div class="row viewrow" id="viewRow">
+    <span class="ttl">вид листинга:</span>
+    <button data-view="text" class="on">текстом</button>
+    <button data-view="table">таблицей</button>
+  </div>
+  <div class="row">
+    <button id="copy">Скопировать</button>
+    <button id="save">Скачать .txt</button>
+    <button id="toAlgo">Открыть в Алго</button>
+  </div>
+  <div class="legend">
+    <span class="sw kAddr">адрес</span>
+    <span class="sw kHex">код</span>
+    <span class="sw kCmd">команда</span>
+    <span class="sw kExact">точно</span>
+    <span class="sw kHeur">догадка</span>
+    <span class="sw kUnk">не переведено</span>
+    <span class="sw kMark">метка мNN</span>
+    <span class="sw kCmt">пояснение</span>
+  </div>
+</div>
+
+<div class="card">
+  <p class="label" id="outLabel">Результат</p>
+  <pre id="out">Здесь появится текст. Вставь код и нажми «Разобрать».</pre>
+</div>
+
+<p><a class="back" href="index.html">← в корпус</a> &nbsp;·&nbsp; <a class="back" href="algo.html">редактор Алго</a></p>
+
+<script src="decoder.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var src    = document.getElementById('src');
+  var out    = document.getElementById('out');
+  var errBox = document.getElementById('err');
+  var outLbl = document.getElementById('outLabel');
+  var fileIn = document.getElementById('file');
+  var viewRow = document.getElementById('viewRow');
+  var srcBar = document.getElementById('srcbar');
+
+  /* Демонстрационный пример — только по кнопке «Пример».
+     Это та же программа, что «°C → °F» в редакторе Алго:
+       вход c (R0), f = c * 9 / 5 + 32, вывод f, стоп.
+     При R0 = 100 в корпусе даёт 212. */
+  var DEMO_HEX = '60 09 12 05 13 03 02 10 41 61 50';
+  var DEMO_NOTE = 'Пример: перевод <b>°C → °F</b>, 11 ячеек. Положи в R0 число 100 — программа даст 212. '
+                + 'Это не твоя программа: нажми «Разобрать», чтобы увидеть листинг, или «Очистить», чтобы начать со своего кода.';
+  var BRIDGE_KEY = 'mk-emulator/decode-bridge';
+
+  var model  = null;
+  var mode   = 'detailed';
+  var view   = 'text';       /* листинг: текстом или таблицей */
+  var fileName = '';
+
+  function setErr(text) { errBox.textContent = text || ''; }
+
+  function setSrcBar(text) {
+    if (!text) { srcBar.className = 'srcbar'; srcBar.innerHTML = ''; return; }
+    srcBar.className = 'srcbar show';
+    srcBar.innerHTML = text;
+  }
+
+  function isCompact() {
+    var w = out.clientWidth || window.innerWidth || 400;
+    return w < 560;
+  }
+
+  /* какой режим рендерить прямо сейчас */
+  function currentMode() {
+    if (mode !== 'listing') return mode;
+    return (view === 'table') ? 'listingTable' : 'listing';
+  }
+
+  /* чистый текст — для буфера обмена и файла */
+  function currentText() {
+    if (!model) return '';
+    var m = currentMode();
+    return window.B3Decode.render(model, m, {
+      compact: (m === 'listing') ? isCompact() : false
+    });
+  }
+
+  function show() {
+    if (!model) return;
+
+    var m = currentMode();
+    var compact = (m === 'listing') && isCompact();
+
+    /* классы контейнера: моноширинный листинг, таблица или обычный текст */
+    out.classList.remove('mono');
+    out.classList.remove('tblout');
+    if (m === 'listing') out.classList.add(compact ? 'tblout' : 'mono');
+    if (m === 'listingTable') out.classList.add('tblout');
+
+    /* разметка есть во ВСЕХ режимах, поэтому всегда innerHTML */
+    out.innerHTML = window.B3Decode.render(model, m, { html: true, compact: compact });
+
+    viewRow.style.display = (mode === 'listing') ? 'flex' : 'none';
+
+    var names = { brief: 'Кратко', detailed: 'Подробно', listing: 'Листинг' };
+    outLbl.textContent = 'Результат · ' + names[mode] +
+      (mode === 'listing' ? (view === 'table' ? ' · таблицей' : (compact ? ' · компактно' : ' · текстом')) : '') +
+      (fileName ? ' · ' + fileName : '');
+  }
+
+  function parseNow() {
+    setErr('');
+    var raw = src.value.trim();
+    if (!raw) { setErr('Пусто: вставь hex-коды программы или нажми «Пример».'); return; }
+
+    var prog = null, meta = { name: '', data: null, saved: '' };
+
+    if (raw.charAt(0) === '{') {
+      try {
+        var obj = JSON.parse(raw);
+        var one = window.B3Decode.fromProgramFile(obj);
+        if (one) {
+          prog = one.prog;
+          meta.name = one.name || '';
+          meta.data = one.data;
+          meta.saved = one.saved || '';
+        }
+      } catch (e) {
+        setErr('Не похоже на JSON программы: ' + e.message);
+        return;
+      }
+    }
+
+    if (!prog) {
+      prog = window.B3Decode.parseHex(raw);
+    }
+
+    if (!prog || !prog.length) {
+      setErr('Не нашёл ни одного кода. Нужны пары hex-цифр: 60 09 12 05 …');
+      model = null;
+      return;
+    }
+
+    model = window.B3Decode.decodeProgram(prog, meta);
+    if (model.empty) setErr('В программе только пустые шаги (К НОП) — переводить нечего.');
+    show();
+  }
+
+  document.getElementById('parse').addEventListener('click', parseNow);
+
+  /* пример — только по кнопке, в поле ничего само не подставляется */
+  document.getElementById('example').addEventListener('click', function () {
+    src.value = DEMO_HEX;
+    fileName = 'пример';
+    setSrcBar(DEMO_NOTE);
+    setErr('');
+    model = null;
+    out.classList.remove('mono');
+    out.classList.remove('tblout');
+    out.textContent = 'Здесь появится текст. Нажми «Разобрать».';
+    outLbl.textContent = 'Результат';
+  });
+
+  document.getElementById('clear').addEventListener('click', function () {
+    src.value = '';
+    out.classList.remove('mono');
+    out.classList.remove('tblout');
+    out.textContent = 'Здесь появится текст. Вставь код и нажми «Разобрать».';
+    outLbl.textContent = 'Результат';
+    setErr('');
+    setSrcBar('');
+    model = null;
+    fileName = '';
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('.modes button'), function (btn) {
+    btn.addEventListener('click', function () {
+      Array.prototype.forEach.call(document.querySelectorAll('.modes button'), function (b) {
+        b.classList.remove('on');
+      });
+      btn.classList.add('on');
+      mode = btn.getAttribute('data-mode');
+      if (model) show();
+    });
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('#viewRow button'), function (btn) {
+    btn.addEventListener('click', function () {
+      Array.prototype.forEach.call(document.querySelectorAll('#viewRow button'), function (b) {
+        b.classList.remove('on');
+      });
+      btn.classList.add('on');
+      view = btn.getAttribute('data-view');
+      if (model) show();
+    });
+  });
+
+  /* при повороте телефона пересобрать листинг: компакт/широкий */
+  var rt = null;
+  window.addEventListener('resize', function () {
+    if (!model || mode !== 'listing' || view !== 'text') return;
+    if (rt) clearTimeout(rt);
+    rt = setTimeout(show, 150);
+  });
+
+  fileIn.addEventListener('change', function () {
+    var f = fileIn.files && fileIn.files[0];
+    if (!f) return;
+    setErr('');
+    var reader = new FileReader();
+
+    reader.onload = function () {
+      var text = String(reader.result || '');
+      fileName = f.name;
+
+      var obj = null;
+      try { obj = JSON.parse(text); } catch (e) { obj = null; }
+
+      if (obj) {
+        var one = window.B3Decode.fromProgramFile(obj);
+        if (one) {
+          src.value = text.length > 200000 ? text.slice(0, 200000) : text;
+          model = window.B3Decode.decodeProgram(one.prog, {
+            name: one.name || f.name.replace(/\.[^.]+$/, ''),
+            data: one.data,
+            saved: one.saved || ''
+          });
+          setSrcBar('Загружен файл <b>' + f.name + '</b>' + (one.name ? ' · программа «' + one.name + '»' : ''));
+          show();
+          return;
+        }
+      }
+
+      /* не JSON — считаем hex-текстом */
+      src.value = text;
+      setSrcBar('Загружен файл <b>' + f.name + '</b> как текст — разбираю hex.');
+      parseNow();
+    };
+
+    reader.onerror = function () { setErr('Файл не прочитался — попробуй ещё раз.'); };
+    reader.readAsText(f, 'utf-8');
+  });
+
+  document.getElementById('copy').addEventListener('click', function () {
+    if (!model) { setErr('Сначала разбери программу.'); return; }
+    var text = currentText();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        outLbl.textContent = 'Результат скопирован в буфер';
+      }, function () { fallbackCopy(text); });
+    } else {
+      fallbackCopy(text);
+    }
+  });
+
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); outLbl.textContent = 'Результат скопирован в буфер'; } catch (e) { setErr('Скопировать не удалось — выдели текст вручную.'); }
+    document.body.removeChild(ta);
+  }
+
+  document.getElementById('save').addEventListener('click', function () {
+    if (!model) { setErr('Сначала разбери программу.'); return; }
+    var text = currentText();
+    var name = (model.meta.name || 'program').replace(/[^\wа-яА-ЯёЁ0-9 _-]+/g, '_').slice(0, 40);
+    var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name + '-' + currentMode() + '.txt';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); document.body.removeChild(a); }, 1000);
+  });
+
+  document.getElementById('toAlgo').addEventListener('click', function () {
+    if (!model) { setErr('Сначала разбери программу.'); return; }
+    var text = window.B3Decode.render(model, mode === 'listing' ? 'brief' : mode);
+    function go() { window.open('algo.html', '_blank'); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        outLbl.textContent = 'Текст скопирован — открой Алго и вставь в поле';
+        go();
+      }, function () { fallbackCopy(text); go(); });
+    } else {
+      fallbackCopy(text);
+      go();
+    }
+  });
+
+  /* ---- приём программы из корпуса (мост) ---- */
+  /* Корпус при нажатии «Дек» кладёт в localStorage {prog, data, name, saved},
+     декодер забирает и сразу разбирает. Ключ одноразовый: прочитали — удалили,
+     чтобы при следующем открытии поле снова было пустым. */
+  function takeFromBridge() {
+    var raw = null;
+    try { raw = localStorage.getItem(BRIDGE_KEY); } catch (e) { return false; }
+    if (!raw) return false;
+    try { localStorage.removeItem(BRIDGE_KEY); } catch (e) {}
+
+    var obj = null;
+    try { obj = JSON.parse(raw); } catch (e) { return false; }
+    if (!obj) return false;
+
+    var prog = obj.prog || obj.cells;
+    if (!Array.isArray(prog) || !prog.length) return false;
+
+    src.value = prog.map(function (c) {
+      return ('0' + (c & 0xFF).toString(16).toUpperCase()).slice(-2);
+    }).join(' ');
+
+    fileName = obj.name || 'из корпуса';
+    setSrcBar('Программа получена <b>из корпуса</b>'
+      + (obj.name ? ': «' + obj.name + '»' : '')
+      + ' · ' + prog.length + ' ячеек. Её можно править и разбирать заново.');
+    parseNow();
+    return true;
+  }
+
+  /* пустой старт: ничего не подставляем, кроме случая, когда пришли из корпуса */
+  setSrcBar('');
+  if (!takeFromBridge()) {
+    out.classList.remove('mono');
+    out.classList.remove('tblout');
+    out.textContent = 'Пока пусто.\n\nВставь hex-коды программы, загрузи .json из корпуса или нажми «Пример».';
+    outLbl.textContent = 'Результат';
+  }
+})();
+</script>
+</body>
+</html>

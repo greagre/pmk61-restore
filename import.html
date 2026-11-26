@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mk-emulator · импорт листинга</title>
+<style>
+:root{
+  --bg:#eef1f5; --card:#fff; --ink:#1d2733; --muted:#6b7787; --line:#d7dee7;
+  --accent:#2f6fed; --ok:#1a8c66; --bad:#c8382f; --warn:#a96400;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:14px 12px 40px}
+h1{font-size:19px;margin:0 0 4px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 0 12px}
+.card h2{font-size:15px;margin:0 0 10px}
+label{display:block;font-size:13px;color:var(--muted);margin:0 0 6px}
+textarea,input{width:100%;font:14px/1.4 var(--mono);color:var(--ink);background:#fbfcfe;border:1px solid var(--line);border-radius:10px;padding:10px}
+textarea{min-height:190px;resize:vertical}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+@media(max-width:560px){.grid,.grid3{grid-template-columns:1fr}}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+button{font:14px/1 inherit;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:#f4f7fb;color:var(--ink);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.ghost{background:#fff}
+button:active{transform:translateY(1px)}
+table{width:100%;border-collapse:collapse;font:13px/1.35 var(--mono)}
+th,td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:12px}
+td.ad{color:var(--muted);width:38px}
+tr.jump td.name{color:var(--accent)}
+tr.adcell td{color:var(--warn)}
+.res{font:14px/1.5 var(--mono);margin-top:10px;padding:10px;border-radius:10px;background:#f7f9fc;border:1px solid var(--line);white-space:pre-wrap}
+.res.ok{background:#eefaf4;border-color:#bfe6d5}
+.res.bad{background:#fdf0ef;border-color:#f3cfcb}
+ul.warn{margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--warn)}
+ul.warn li{margin:2px 0}
+.foot{color:var(--muted);font-size:12px;margin-top:16px;text-align:center}
+a{color:var(--accent)}
+.hide{display:none}
+code{font-family:var(--mono);font-size:12px}
+</style>
+</head>
+<body>
+<h1>Импорт листинга</h1>
+<p class="sub">Вставь программу как строки «адрес → подпись» или как последовательность hex-кодов. Страница разберёт её, покажет переходы, прогонит в ядре и отдаст готовый файл для библиотеки.</p>
+
+<section class="card">
+  <h2>1. Текст листинга</h2>
+  <label for="src">Формат: <code>00 ПП 20</code> · <code>23 F x≠0 43</code> · <code>04 X→П 2</code> — или hex: <code>53 02 00 63 42</code></label>
+  <textarea id="src" spellcheck="false" placeholder="00 ПП 20&#10;03 П→X 3&#10;04 X→П 2&#10;…"></textarea>
+  <div class="row">
+    <button class="primary" id="btnParse">Разобрать</button>
+    <button class="ghost" id="btnExample">Пример: НОД</button>
+    <button class="ghost" id="btnInvert">Инвертировать условия</button>
+    <button class="ghost" id="btnClear">Очистить</button>
+  </div>
+</section>
+
+<section class="card hide" id="listCard">
+  <h2>2. Что получилось</h2>
+  <div id="summary" class="res"></div>
+  <ul class="warn" id="warns"></ul>
+  <div style="margin-top:10px;max-height:430px;overflow:auto;border:1px solid var(--line);border-radius:10px">
+    <table>
+      <thead><tr><th>адр</th><th>hex</th><th>команда</th><th></th></tr></thead>
+      <tbody id="listing"></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>3. Прогон</h2>
+  <div class="grid3">
+    <div>
+      <label for="regs">Регистры</label>
+      <input id="regs" placeholder="R1=32, R2=124, R3=206, R4=1086">
+    </div>
+    <div>
+      <label for="x0">Начальный X</label>
+      <input id="x0" placeholder="0">
+    </div>
+    <div>
+      <label for="limit">Лимит шагов</label>
+      <input id="limit" placeholder="20000">
+    </div>
+  </div>
+  <div class="row">
+    <button class="primary" id="btnRun">Прогнать</button>
+  </div>
+  <div class="res hide" id="runOut"></div>
+</section>
+
+<section class="card">
+  <h2>4. Сохранить или открыть</h2>
+  <div class="grid">
+    <div>
+      <label for="pname">Название программы</label>
+      <input id="pname" placeholder="Импорт: моя программа">
+    </div>
+    <div>
+      <label for="pexp">Ожидаемый X (необязательно)</label>
+      <input id="pexp" placeholder="например 6">
+    </div>
+  </div>
+  <div class="row">
+    <button class="primary" id="btnJson">Скачать .json для библиотеки</button>
+    <button class="ghost" id="btnBridge">Открыть в корпусе</button>
+  </div>
+  <div class="res hide" id="saveOut"></div>
+</section>
+
+<p class="foot">
+  <a href="index.html">корпус</a> ·
+  <a href="tests.html">тесты ядра</a> ·
+  ядро <code>core.js</code>, надстройка <code>core-fix.js</code>
+</p>
+
+<script src="core.js"></script>
+<script src="core-fix.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var C = window.MKCore;
+  var PROG_LEN = C ? C.PROG_LEN : 98;
+  var NOP = C ? C.NOP : 0x54;
+  var BRIDGE_KEY = 'mk-emulator/bridge';
+
+  var $ = function (id) { return document.getElementById(id); };
+  var NAME = {};
+  var parsed = null;
+
+  /* ---------- мелкие помощники ---------- */
+  function norm(s) {
+    return String(s == null ? '' : s)
+      .replace(/\u00A0/g, ' ')
+      .replace(/->/g, '→')
+      .replace(/-/g, '−')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  function pad2(n) { var s = String(n | 0); return s.length < 2 ? '0' + s : s; }
+  function hex2(c) { return C ? C.hex2(c) : ('0' + (c & 255).toString(16).toUpperCase()).slice(-2); }
+  function labelOf(c) { return C ? C.cmdName(c) : '?'; }
+  function isJumpCode(c) { return C ? C.isJumpCmd(c) : false; }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function num(v) {
+    var t = String(v == null ? '' : v).replace(/\s/g, '').replace(/,/g, '.').replace(/−/g, '-');
+    var n = parseFloat(t);
+    return isNaN(n) ? NaN : n;
+  }
+
+  /* ---------- таблица «подпись → код» ---------- */
+  function buildNames() {
+    NAME = {};
+    if (!C) return;
+    for (var c = 0; c <= 255; c++) {
+      var n = C.cmdName(c);
+      if (!n || n === '?') continue;
+      NAME[norm(n)] = c;
+    }
+  }
+
+  /* ---------- разбор текста ---------- */
+  var HEXLINE = /^[0-9A-Fa-f]{2}(\s+[0-9A-Fa-f]{2})+$/;
+
+  function splitLine(line) {
+    var m = line.match(/^\s*(\d{1,2})\s*[\t|:=]\s*(.+)$/);
+    if (m) return { addr: +m[1], body: m[2] };
+    m = line.match(/^\s*(\d{1,2})\s+(.+)$/);
+    if (m) return { addr: +m[1], body: m[2] };
+    return null;
+  }
+
+  function put(cells, warns, addr, body, raw, lineNo) {
+    var t = norm(body);
+
+    if (addr < 0 || addr >= PROG_LEN) {
+      warns.push('Строка ' + lineNo + ': адрес ' + pad2(addr) + ' вне памяти (00–' + pad2(PROG_LEN - 1) + ')');
+      return;
+    }
+
+    /* «ПП 20», «F x≠0 43», «БП 20» — команда перехода с адресом */
+    var m = t.match(/^(.*?)\s+(\d{1,2})$/);
+    if (m) {
+      var nm = norm(m[1]);
+      if (Object.prototype.hasOwnProperty.call(NAME, nm)) {
+        var code = NAME[nm];
+        if (isJumpCode(code)) {
+          var target = +m[2];
+          write(cells, warns, addr, code, raw, 'cmd');
+          if (addr + 2 >= PROG_LEN) {
+            warns.push('Строка ' + lineNo + ': переход на ' + pad2(addr) + ' не помещается в памяти');
+            return;
+          }
+          write(cells, warns, addr + 1, Math.floor(target / 10), '', 'addr');
+          write(cells, warns, addr + 2, target % 10, '', 'addr');
+          return;
+        }
+      }
+    }
+
+    /* одиночная цифра */
+    if (/^\d$/.test(t)) {
+      write(cells, warns, addr, +t, raw, 'cmd');
+      return;
+    }
+
+    /* обычная команда по названию */
+    if (Object.prototype.hasOwnProperty.call(NAME, t)) {
+      write(cells, warns, addr, NAME[t], raw, 'cmd');
+      return;
+    }
+
+    warns.push('Строка ' + lineNo + ': не знаю команду «' + t + '»');
+  }
+
+  function write(cells, warns, addr, code, raw, kind) {
+    if (Object.prototype.hasOwnProperty.call(cells, addr) && cells[addr].code !== code) {
+      warns.push('Адрес ' + pad2(addr) + ': уже было ' + hex2(cells[addr].code) +
+        ', заменяю на ' + hex2(code));
+    }
+    cells[addr] = { code: code & 255, src: raw || '', kind: kind || 'cmd' };
+  }
+
+  function parse(text) {
+    var lines = String(text).split(/\r?\n/);
+    var cells = {};
+    var warns = [];
+    var hex = [];
+    var hasAddr = false;
+
+    lines.forEach(function (raw, idx) {
+      var line = raw.replace(/\t/g, ' ').trim();
+      if (!line) return;
+      if (/^(#|\/\/|;)/.test(line)) return;
+
+      if (HEXLINE.test(line)) {
+        line.split(/\s+/).forEach(function (t) { hex.push(parseInt(t, 16)); });
+        return;
+      }
+
+      var sp = splitLine(line);
+      if (!sp) {
+        warns.push('Строка ' + (idx + 1) + ': не понял «' + line + '»');
+        return;
+      }
+      hasAddr = true;
+      put(cells, warns, sp.addr, sp.body, line, idx + 1);
+    });
+
+    var prog = new Array(PROG_LEN).fill(NOP);
+    var used = 0;
+
+    if (hasAddr) {
+      Object.keys(cells).forEach(function (k) {
+        prog[+k] = cells[+k].code;
+        used++;
+      });
+    } else if (hex.length) {
+      for (var i = 0; i < hex.length && i < PROG_LEN; i++) {
+        prog[i] = hex[i] & 255;
+        used++;
+      }
+      if (hex.length > PROG_LEN) {
+        warns.push('Hex-кодов больше, чем памяти: взяты первые ' + PROG_LEN);
+      }
+      Object.keys(prog).forEach(function (k) {
+        if (prog[k] !== NOP) cells[k] = { code: prog[k], src: '', kind: 'cmd' };
+      });
+    } else {
+      return { error: 'Пусто: нет ни адресных строк, ни hex-кодов', warnings: warns, prog: prog };
+    }
+
+    /* проверка адресов переходов */
+    for (var a = 0; a < PROG_LEN; a++) {
+      var c = prog[a];
+      if (!isJumpCode(c)) continue;
+      if (a + 2 >= PROG_LEN) {
+        warns.push('Адрес ' + pad2(a) + ': переход не помещается в памяти');
+        continue;
+      }
+      var hi = prog[a + 1], lo = prog[a + 2];
+      if (hi > 9 || lo > 9) {
+        warns.push('Адрес ' + pad2(a) + ': после ' + esc(labelOf(c)) +
+          ' должны стоять две цифры адреса, а стоят ' + hex2(hi) + ' и ' + hex2(lo));
+        continue;
+      }
+      var t = hi * 10 + lo;
+      if (t >= PROG_LEN) {
+        warns.push('Адрес ' + pad2(a) + ': переход ведёт за пределы памяти — ' + pad2(t));
+      }
+    }
+
+    return { prog: prog, cells: cells, warnings: warns, used: used, hexMode: !hasAddr };
+  }
+
+  /* ---------- вывод ---------- */
+  function render(res) {
+    parsed = res;
+    var card = $('listCard');
+    var sum = $('summary');
+    var warns = $('warns');
+    var body = $('listing');
+
+    card.classList.remove('hide');
+    warns.innerHTML = '';
+    body.innerHTML = '';
+
+    if (res.error) {
+      sum.className = 'res bad';
+      sum.textContent = res.error;
+      renderWarns(res.warnings);
+      return;
+    }
+
+    var last = -1;
+    res.prog.forEach(function (c, i) { if (c !== NOP) last = i; });
+
+    for (var i = 0; i <= last; i++) {
+      var c = res.prog[i];
+      var cell = res.cells && res.cells[i];
+      var isAd = cell && cell.kind === 'addr';
+      var tr = document.createElement('tr');
+      if (isAd) tr.className = 'adcell';
+      else if (isJumpCode(c)) tr.className = 'jump';
+      tr.innerHTML =
+        '<td class="ad">' + pad2(i) + '</td>' +
+        '<td>' + hex2(c) + '</td>' +
+        '<td class="name">' + esc(labelOf(c)) + '</td>' +
+        '<td>' + (isAd ? 'адрес' : '') + '</td>';
+      body.appendChild(tr);
+    }
+
+    var jumps = 0;
+    res.prog.forEach(function (c) { if (isJumpCode(c)) jumps++; });
+
+    sum.className = 'res ok';
+    sum.textContent =
+      (res.hexMode ? 'Разобрано как hex-поток' : 'Разобрано как листинг с адресами') +
+      '\nячеек занято: ' + res.used +
+      ' · последний адрес: ' + (last < 0 ? '—' : pad2(last)) +
+      ' · переходов: ' + jumps;
+
+    renderWarns(res.warnings);
+  }
+
+  function renderWarns(list) {
+    var box = $('warns');
+    box.innerHTML = '';
+    if (!list || !list.length) return;
+    list.forEach(function (w) {
+      var li = document.createElement('li');
+      li.textContent = w;
+      box.appendChild(li);
+    });
+  }
+
+  /* ---------- данные для прогона ---------- */
+  function regIndex(ch) {
+    if (/^[0-9]$/.test(ch)) return +ch;
+    var i = 'abcd'.indexOf(String(ch).toLowerCase());
+    return i < 0 ? -1 : 10 + i;
+  }
+
+  function parseRegs(s) {
+    var out = {};
+    var t = String(s || '').trim();
+    if (!t) return out;
+    var parts = t.split(/[;,\n]+/).map(function (x) { return x.trim(); }).filter(Boolean);
+    var named = parts.some(function (p) { return /^[Rr]?\s*[0-9a-dA-D]\s*=/.test(p); });
+
+    if (named) {
+      parts.forEach(function (p) {
+        var m = p.match(/^[Rr]?\s*([0-9a-dA-D])\s*=\s*(.+)$/);
+        if (!m) return;
+        var idx = regIndex(m[1]);
+        var v = num(m[2]);
+        if (idx >= 0 && !isNaN(v)) out[idx] = v;
+      });
+    } else {
+      /* без имён — по порядку, начиная с R1 (как в листингах) */
+      parts.forEach(function (p, i) {
+        var v = num(p);
+        if (!isNaN(v)) out[i + 1] = v;
+      });
+    }
+    return out;
+  }
+
+  /* ---------- прогон ---------- */
+  function doRun() {
+    var out = $('runOut');
+    out.classList.remove('hide');
+
+    if (!parsed || !parsed.prog) {
+      out.className = 'res bad';
+      out.textContent = 'Сначала разбери листинг кнопкой «Разобрать».';
+      return;
+    }
+    if (!C) {
+      out.className = 'res bad';
+      out.textContent = 'Ядро core.js не загрузилось — прогон недоступен. Разбор листинга при этом работает.';
+      return;
+    }
+
+    var regs = parseRegs($('regs').value);
+    var x0 = num($('x0').value);
+    if (isNaN(x0)) x0 = 0;
+    var limit = parseInt($('limit').value, 10);
+    if (!limit || limit < 1) limit = 20000;
+    if (limit > 200000) limit = 200000;
+
+    var core = C.create({});
+    core.setProgram(parsed.prog);
+    core.reset(true);
+    Object.keys(regs).forEach(function (k) { core.setRegister(+k, regs[k]); });
+    core.setX(x0);
+
+    var r = core.run(limit);
+    var verdict = r.result === 'stop' ? 'С/П достигнуто'
+      : r.result === 'error' ? 'ошибка выполнения'
+      : 'лимит шагов';
+
+    out.className = 'res ' + (r.result === 'stop' ? 'ok' : (r.result === 'error' ? 'bad' : ''));
+
+    var regsText = Object.keys(regs).map(function (k) {
+      return 'R' + (C.REG_NAMES[k] || k) + ' = ' + core.fmt(regs[k]);
+    }).join(', ');
+
+    out.textContent =
+      'вход: ' + (regsText || 'регистры пусты') + ', X = ' + core.fmt(x0) + '\n' +
+      'X = ' + core.fmt(r.x) + '\n' +
+      'шагов: ' + r.steps + '\n' +
+      'итог: ' + verdict + (r.result === 'cont' ? ' (программа не дошла до С/П)' : '');
+
+    if (r.result === 'cont') {
+      out.textContent += '\n\nПодсказка: если программа должна была остановиться, проверь адреса переходов и С/П.';
+    }
+  }
+
+  /* ---------- инверсия условий ---------- */
+  function invertConditions() {
+    if (!parsed || !parsed.prog) {
+      alert('Сначала разбери листинг.');
+      return;
+    }
+    var pairs = { 0x57: 0x5E, 0x5E: 0x57, 0x59: 0x5C, 0x5C: 0x59 };
+    var changed = 0;
+    parsed.prog = parsed.prog.map(function (c) {
+      if (pairs[c] !== undefined) { changed++; return pairs[c]; }
+      return c;
+    });
+    Object.keys(parsed.cells).forEach(function (k) {
+      var c = parsed.prog[+k];
+      parsed.cells[k].code = c;
+    });
+    render({
+      prog: parsed.prog,
+      cells: parsed.cells,
+      warnings: ['Условия инвертированы: F x≠0 ↔ F x=0, F x≥0 ↔ F x<0 (заменено ' + changed + ' команд)']
+    });
+  }
+
+  /* ---------- пример ---------- */
+  var EXAMPLE = [
+    '# НОД четырёх чисел — Евклид вычитанием',
+    '# R1 = 32, R2 = 124, R3 = 206, R4 = 1086 → НОД 2',
+    '00 ПП 20',
+    '03 П→X 3',
+    '04 X→П 2',
+    '05 ПП 20',
+    '08 П→X 4',
+    '09 X→П 2',
+    '10 ПП 20',
+    '13 П→X 1',
+    '14 С/П',
+    '15 К НОП',
+    '20 П→X 1',
+    '21 П→X 2',
+    '22 −',
+    '23 F x≠0 43',
+    '26 F x≥0 36',
+    '29 П→X 1',
+    '30 П→X 2',
+    '31 −',
+    '32 X→П 1',
+    '33 БП 20',
+    '36 П→X 2',
+    '37 П→X 1',
+    '38 −',
+    '39 X→П 2',
+    '40 БП 20',
+    '43 В/О'
+  ].join('\n');
+
+  /* ---------- сохранение ---------- */
+  function programName() {
+    var v = ($('pname').value || '').trim();
+    return v || 'Импорт ' + new Date().toISOString().slice(0, 16).replace('T', ' ');
+  }
+
+  function exportJson() {
+    var out = $('saveOut');
+    out.classList.remove('hide');
+
+    if (!parsed || !parsed.prog) {
+      out.className = 'res bad';
+      out.textContent = 'Сначала разбери листинг.';
+      return;
+    }
+
+    var name = programName();
+    var data = parseRegs($('regs').value);
+    var exp = num($('pexp').value);
+
+    var entry = {
+      name: name,
+      prog: parsed.prog,
+      data: data
+    };
+    if (!isNaN(exp)) {
+      entry.expect = exp;
+      entry.check = 'импорт → X = ' + exp;
+    }
+
+    var payload = {
+      app: 'mk-emulator',
+      model: 'b3-34',
+      saved: new Date().toISOString(),
+      programs: [entry]
+    };
+
+    var text = JSON.stringify(payload, null, 2);
+    var blob = new Blob([text], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'b3-34-import.json';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+
+    out.className = 'res ok';
+    out.textContent = 'Файл собран: «' + name + '»\n' +
+      'ячеек: ' + parsed.prog.filter(function (c, i) { return c !== NOP; }).length + '\n' +
+      'Дальше: в корпусе открой ☰ → «Импорт» и выбери этот файл — программа появится в «Моих».';
+  }
+
+  function openInBody() {
+    var out = $('saveOut');
+    out.classList.remove('hide');
+
+    if (!parsed || !parsed.prog) {
+      out.className = 'res bad';
+      out.textContent = 'Сначала разбери листинг.';
+      return;
+    }
+
+    try {
+      localStorage.setItem(BRIDGE_KEY, JSON.stringify({
+        prog: parsed.prog,
+        data: parseRegs($('regs').value),
+        from: 'Импорт листинга'
+      }));
+    } catch (e) {
+      out.className = 'res bad';
+      out.textContent = 'Не удалось передать программу в корпус: ' + e.message;
+      return;
+    }
+
+    out.className = 'res ok';
+    out.textContent = 'Передаю в корпус… Если страница не открылась сама — нажми «корпус» внизу.';
+    setTimeout(function () { location.href = 'index.html'; }, 350);
+  }
+
+  /* ---------- запуск ---------- */
+  function init() {
+    buildNames();
+
+    if (!C) {
+      var note = document.createElement('div');
+      note.className = 'res bad';
+      note.textContent = 'Ядро core.js не загрузилось. Разбор листинга и hex работает, прогон — нет. Проверь, что core.js лежит рядом с этой страницей.';
+      $('listCard').parentNode.insertBefore(note, $('listCard'));
+    }
+
+    $('btnParse').addEventListener('click', function () { render(parse($('src').value)); });
+    $('btnExample').addEventListener('click', function () {
+      $('src').value = EXAMPLE;
+      $('regs').value = 'R1=32, R2=124, R3=206, R4=1086';
+      $('x0').value = '0';
+      $('limit').value = '20000';
+      $('pexp').value = '2';
+      render(parse(EXAMPLE));
+    });
+    $('btnInvert').addEventListener('click', invertConditions);
+    $('btnClear').addEventListener('click', function () {
+      $('src').value = '';
+      $('listCard').classList.add('hide');
+      $('summary').textContent = '';
+      $('warns').innerHTML = '';
+      $('listing').innerHTML = '';
+      $('runOut').classList.add('hide');
+      $('saveOut').classList.add('hide');
+      parsed = null;
+    });
+    $('btnRun').addEventListener('click', doRun);
+    $('btnJson').addEventListener('click', exportJson);
+    $('btnBridge').addEventListener('click', openInBody);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

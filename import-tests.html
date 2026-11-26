@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mk-emulator · автопроверка импорта</title>
+<style>
+:root{
+  --bg:#eef1f5; --card:#fff; --ink:#1d2733; --muted:#6b7787; --line:#d7dee7;
+  --accent:#2f6fed; --ok:#1a8c66; --bad:#c8382f; --warn:#a96400;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:14px 12px 40px}
+h1{font-size:19px;margin:0 0 4px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 0 12px}
+.card h2{font-size:15px;margin:0 0 8px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px}
+button{font:14px/1 inherit;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:#f4f7fb;color:var(--ink);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:disabled{opacity:.55}
+table{width:100%;border-collapse:collapse;font:13px/1.35 var(--mono)}
+th,td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:12px}
+.res{font:14px/1.5 var(--mono);padding:10px;border-radius:10px;background:#f7f9fc;border:1px solid var(--line);white-space:pre-wrap}
+.res.ok{background:#eefaf4;border-color:#bfe6d5}
+.res.bad{background:#fdf0ef;border-color:#f3cfcb}
+.res.warn{background:#fdf8ee;border-color:#eedfbe}
+.muted{color:var(--muted);font-size:13px}
+.foot{color:var(--muted);font-size:12px;margin-top:16px;text-align:center}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:12px}
+.case{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin:0 0 10px}
+.case h3{font-size:14px;margin:0 0 8px;display:flex;gap:8px;align-items:baseline}
+.badge{font:12px/1 var(--mono);padding:4px 7px;border-radius:8px;border:1px solid var(--line);color:var(--muted)}
+.badge.ok{background:#eefaf4;border-color:#bfe6d5;color:var(--ok)}
+.badge.bad{background:#fdf0ef;border-color:#f3cfcb;color:var(--bad)}
+td.v-ok{color:var(--ok)}
+td.v-bad{color:var(--bad);font-weight:600}
+.frame{position:absolute;left:-9999px;top:0;width:400px;height:700px;border:0;visibility:hidden}
+</style>
+</head>
+<body>
+<h1>Автопроверка импорта</h1>
+<p class="sub">Страница сама открывает настоящий <code>import.html</code> в скрытой рамке, вписывает листинги, нажимает «Разобрать» и «Прогнать» и сравнивает результат с ожиданием. Копии парсера здесь нет — проверяется реальная страница, поэтому кнопок нажимать не нужно.</p>
+
+<div class="row">
+  <button class="primary" id="btnRun">Проверить всё</button>
+  <span class="muted" id="state">Готово к запуску</span>
+</div>
+
+<div class="card">
+  <div class="res" id="totals">Ещё не запускалось.</div>
+</div>
+
+<div id="cases"></div>
+
+<p class="foot">
+  <a href="import.html">импорт листинга</a> ·
+  <a href="tests.html">тесты ядра</a> ·
+  <a href="index.html">корпус</a>
+</p>
+
+<script>
+(function () {
+  'use strict';
+
+  var NOD = [
+    '# НОД четырёх чисел — Евклид вычитанием',
+    '00 ПП 20',
+    '03 П→X 3',
+    '04 X→П 2',
+    '05 ПП 20',
+    '08 П→X 4',
+    '09 X→П 2',
+    '10 ПП 20',
+    '13 П→X 1',
+    '14 С/П',
+    '15 К НОП',
+    '20 П→X 1',
+    '21 П→X 2',
+    '22 −',
+    '23 F x≠0 43',
+    '26 F x≥0 36',
+    '29 П→X 1',
+    '30 П→X 2',
+    '31 −',
+    '32 X→П 1',
+    '33 БП 20',
+    '36 П→X 2',
+    '37 П→X 1',
+    '38 −',
+    '39 X→П 2',
+    '40 БП 20',
+    '43 В/О'
+  ].join('\n');
+
+  /* Кейс «ПП»: 5 · ПП 06 · 1 + · В/О · С/П. Цифра 1 после вызова
+     обязана стать новым числом (иначе 5 и 1 склеятся в 51). */
+  var PP_HEX = '05 53 00 06 50 54 01 10 52';
+
+  var CASES = [
+    {
+      title: 'НОД: листинг с адресами и подписями',
+      src: NOD,
+      regs: 'R1=32, R2=124, R3=206, R4=1086',
+      x0: '0',
+      limit: '20000',
+      expect: { mode: 'листинг', used: 40, last: '43', x: '2', steps: '6064', verdict: 'С/П достигнуто' }
+    },
+    {
+      title: 'Номер после ПП — новое число (проверяет core-fix.js)',
+      src: PP_HEX,
+      regs: '',
+      x0: '0',
+      limit: '5000',
+      expect: { mode: 'hex', used: 9, last: '8', x: '6', verdict: 'С/П достигнуто' }
+    },
+    {
+      title: 'Зацикливание: БП на самого себя упирается в лимит',
+      src: '51 00 00',
+      regs: '',
+      x0: '0',
+      limit: '1000',
+      expect: { mode: 'hex', used: 3, last: '2', steps: '1000', verdict: 'лимит шагов' }
+    },
+    {
+      title: 'Переход без адреса ловится предупреждением',
+      src: '00 ПП\n01 П→X 1',
+      expect: { warn: ['две цифры адреса'] }
+    },
+    {
+      title: 'Неизвестная команда не превращается в мусор',
+      src: '00 РЖД',
+      expect: { warn: ['не знаю команду'] }
+    },
+    {
+      title: 'Адрес за пределами памяти отклоняется',
+      src: '99 П→X 1',
+      expect: { warn: ['вне памяти'] }
+    },
+    {
+      title: 'Инверсия условий меняет F x≠0 на F x=0',
+      src: NOD,
+      invert: true,
+      invertAt: { addr: '23', hex: '5E' },
+      expect: { warn: ['инвертированы'] }
+    }
+  ];
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function pick(text, re) {
+    var m = String(text || '').match(re);
+    return m ? String(m[1]).trim() : null;
+  }
+
+  function loadFrame() {
+    return new Promise(function (resolve, reject) {
+      var ifr = document.createElement('iframe');
+      ifr.className = 'frame';
+      ifr.src = 'import.html?t=' + Date.now();
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        reject(new Error('import.html не загрузилась за 8 с'));
+      }, 8000);
+      ifr.addEventListener('load', function () {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(ifr);
+      });
+      document.body.appendChild(ifr);
+    });
+  }
+
+  function click(doc, id) {
+    var el = doc.getElementById(id);
+    if (!el) throw new Error('на странице импорта нет кнопки ' + id);
+    el.click();
+  }
+
+  function warnsOf(doc) {
+    return Array.prototype.map.call(doc.querySelectorAll('#warns li'), function (li) {
+      return li.textContent;
+    });
+  }
+
+  function cellHex(doc, addr) {
+    var rows = doc.querySelectorAll('#listing tr');
+    for (var i = 0; i < rows.length; i++) {
+      var t = rows[i].querySelectorAll('td');
+      if (t.length > 1 && t[0].textContent.trim() === addr) return t[1].textContent.trim();
+    }
+    return null;
+  }
+
+  function runCase(k) {
+    var checks = [];
+    function chk(label, exp, act) {
+      checks.push({ label: label, exp: String(exp), act: act == null ? '—' : String(act), ok: String(exp) === String(act) });
+      return String(exp) === String(act);
+    }
+
+    return loadFrame().then(function (ifr) {
+      var doc = ifr.contentDocument;
+      if (!doc) throw new Error('нет доступа к документу рамки');
+
+      doc.getElementById('src').value = k.src;
+      click(doc, 'btnParse');
+
+      var sum = (doc.getElementById('summary').textContent || '').trim();
+      var warns = warnsOf(doc).join(' | ');
+
+      if (k.expect.mode) {
+        chk('режим разбора', k.expect.mode, sum.indexOf('hex-поток') >= 0 ? 'hex' : 'листинг');
+      }
+      if (k.expect.used != null) chk('ячеек занято', k.expect.used, pick(sum, /ячеек занято: (\d+)/));
+      if (k.expect.last != null) chk('последний адрес', k.expect.last, pick(sum, /последний адрес: ([0-9]+|—)/));
+      (k.expect.warn || []).forEach(function (w) {
+        chk('предупреждение «' + w + '»', 'есть', warns.indexOf(w) >= 0 ? 'есть' : 'нет');
+      });
+
+      if (k.invert) {
+        click(doc, 'btnInvert');
+        var w2 = warnsOf(doc).join(' | ');
+        chk('инверсия отмечена', 'есть', w2.indexOf('инвертированы') >= 0 ? 'есть' : 'нет');
+        if (k.invertAt) {
+          chk('код на адресе ' + k.invertAt.addr, k.invertAt.hex, cellHex(doc, k.invertAt.addr));
+        }
+      }
+
+      if (k.expect.x != null || k.expect.steps != null || k.expect.verdict) {
+        doc.getElementById('regs').value = k.regs || '';
+        doc.getElementById('x0').value = k.x0 || '0';
+        doc.getElementById('limit').value = k.limit || '20000';
+        click(doc, 'btnRun');
+        var out = (doc.getElementById('runOut').textContent || '');
+        if (k.expect.x != null) chk('итоговый X', k.expect.x, pick(out, /^X = (.+)$/m));
+        if (k.expect.steps != null) chk('шагов', k.expect.steps, pick(out, /шагов: (\d+)/));
+        if (k.expect.verdict) chk('итог', k.expect.verdict, pick(out, /итог: ([^\n(]+)/));
+      }
+
+      ifr.remove();
+      return { title: k.title, checks: checks };
+    }).catch(function (e) {
+      try { ifr.remove(); } catch (x) {}
+      checks.push({ label: 'ход проверки', exp: 'без ошибок', act: e.message, ok: false });
+      return { title: k.title, checks: checks };
+    });
+  }
+
+  function draw(results) {
+    var box = $('cases');
+    box.innerHTML = '';
+
+    var casesOk = 0;
+    var totalChecks = 0;
+    var passedChecks = 0;
+
+    results.forEach(function (r) {
+      var caseOk = r.checks.length > 0 && r.checks.every(function (c) { return c.ok; });
+      if (caseOk) casesOk++;
+      totalChecks += r.checks.length;
+      passedChecks += r.checks.filter(function (c) { return c.ok; }).length;
+
+      var card = document.createElement('section');
+      card.className = 'case';
+
+      var h = document.createElement('h3');
+      var badge = document.createElement('span');
+      badge.className = 'badge ' + (caseOk ? 'ok' : 'bad');
+      badge.textContent = caseOk ? 'прошло' : 'не прошло';
+      h.appendChild(badge);
+      h.appendChild(document.createTextNode(r.title));
+      card.appendChild(h);
+
+      var tb = document.createElement('table');
+      tb.innerHTML = '<thead><tr><th>проверка</th><th>ждали</th><th>получили</th></tr></thead>';
+      var body = document.createElement('tbody');
+      r.checks.forEach(function (c) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + c.label.replace(/</g, '&lt;') + '</td>' +
+          '<td>' + c.exp.replace(/</g, '&lt;') + '</td>' +
+          '<td class="' + (c.ok ? 'v-ok' : 'v-bad') + '">' + (c.act === null ? '—' : c.act.replace(/</g, '&lt;')) + '</td>';
+        body.appendChild(tr);
+      });
+      tb.appendChild(body);
+      card.appendChild(tb);
+      box.appendChild(card);
+    });
+
+    var tot = $('totals');
+    var allOk = casesOk === results.length && results.length > 0;
+    tot.className = 'res ' + (allOk ? 'ok' : 'bad');
+    tot.textContent =
+      'кейсов пройдено: ' + casesOk + ' из ' + results.length + '\n' +
+      'проверок пройдено: ' + passedChecks + ' из ' + totalChecks + '\n' +
+      (allOk ? 'всё сходится — импорт работает' : 'есть расхождения: смотри красные строки ниже');
+  }
+
+  function runAll() {
+    var btn = $('btnRun');
+    btn.disabled = true;
+    $('cases').innerHTML = '';
+    $('totals').className = 'res';
+    $('totals').textContent = 'Идёт проверка…';
+
+    var results = [];
+    var chain = Promise.resolve();
+
+    CASES.forEach(function (k, i) {
+      chain = chain.then(function () {
+        $('state').textContent = 'кейс ' + (i + 1) + ' из ' + CASES.length + ': ' + k.title;
+        return runCase(k).then(function (r) { results.push(r); });
+      });
+    });
+
+    chain.then(function () {
+      $('state').textContent = 'готово';
+      draw(results);
+      btn.disabled = false;
+    }).catch(function (e) {
+      $('state').textContent = 'сбой: ' + e.message;
+      btn.disabled = false;
+    });
+  }
+
+  $('btnRun').addEventListener('click', runAll);
+  setTimeout(runAll, 300);
+})();
+</script>
+</body>
+</html>
